@@ -149,14 +149,10 @@ def check_appointments_with_xvfb() -> bool:
         text=True,
     )
     if result.returncode != 0:
-        logger.error(
-            "xvfb-run failed with code %s. stdout=%r stderr=%r. "
-            "Trying appointment check directly.",
-            result.returncode,
-            result.stdout,
-            result.stderr,
+        raise RuntimeError(
+            "xvfb-run appointment check failed with code "
+            f"{result.returncode}. stdout={result.stdout!r} stderr={result.stderr!r}"
         )
-        return appointments_available()
 
     output_lines = result.stdout.strip().splitlines()
     if not output_lines:
@@ -166,6 +162,25 @@ def check_appointments_with_xvfb() -> bool:
     if isinstance(available, list):
         return any(available)
     return bool(available)
+
+
+def run_appointment_check() -> bool:
+    xvfb_run = shutil.which("xvfb-run")
+    if USE_XVFB and xvfb_run is not None:
+        return check_appointments_with_xvfb()
+
+    if USE_XVFB:
+        logger.warning("xvfb-run was not found; running appointment check directly.")
+
+    try:
+        return appointments_available()
+    except Exception as exc:
+        if "headed browser without having a XServer" in str(exc):
+            raise RuntimeError(
+                "Playwright needs an X server. Install xvfb/xauth on the server "
+                "or set PRENOTAMI_HEADLESS=true."
+            ) from exc
+        raise
 
 
 def is_available_result(result) -> bool:
@@ -287,7 +302,7 @@ async def monitor_appointments() -> None:
 
     while True:
         try:
-            available = await asyncio.to_thread(check_appointments_with_xvfb)
+            available = await asyncio.to_thread(run_appointment_check)
             is_available = is_available_result(available)
             logger.info("appointments_available returned: %s", available)
 
