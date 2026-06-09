@@ -35,6 +35,7 @@ def appointments_available() -> bool:
             page.locator('button[type="submit"]').click()
 
             page.wait_for_load_state("load")
+            page.wait_for_timeout(5000)
             time.sleep(5)
 
             try:
@@ -78,7 +79,7 @@ def appointments_available() -> bool:
             )
             final_res.append(unavailable_text not in content)
 
-            return final_res
+            return any(final_res)
 
         finally:
             browser.close()

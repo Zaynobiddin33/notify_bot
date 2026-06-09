@@ -145,11 +145,33 @@ def check_appointments_with_xvfb() -> bool:
     )
     result = subprocess.run(
         [xvfb_run, "-a", sys.executable, "-c", script],
-        check=True,
         capture_output=True,
         text=True,
     )
-    return bool(json.loads(result.stdout.strip().splitlines()[-1])["available"])
+    if result.returncode != 0:
+        logger.error(
+            "xvfb-run failed with code %s. stdout=%r stderr=%r. "
+            "Trying appointment check directly.",
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        )
+        return appointments_available()
+
+    output_lines = result.stdout.strip().splitlines()
+    if not output_lines:
+        raise RuntimeError("xvfb-run finished successfully but produced no output")
+
+    available = json.loads(output_lines[-1])["available"]
+    if isinstance(available, list):
+        return any(available)
+    return bool(available)
+
+
+def is_available_result(result) -> bool:
+    if isinstance(result, list):
+        return any(result)
+    return bool(result)
 
 
 @router.message(Command("start"))
@@ -266,12 +288,13 @@ async def monitor_appointments() -> None:
     while True:
         try:
             available = await asyncio.to_thread(check_appointments_with_xvfb)
+            is_available = is_available_result(available)
             logger.info("appointments_available returned: %s", available)
 
-            if (available[0] or available[1]) and not last_available:
+            if is_available and not last_available:
                 await notify_all_users(NOTIFICATION_TEXT)
 
-            last_available = available
+            last_available = is_available
         except Exception:
             logger.exception("Appointment availability check failed.")
 
