@@ -9,6 +9,15 @@ load_dotenv()
 EMAIL = os.getenv("PRENOTAMI_EMAIL")
 PASSWORD = os.getenv("PRENOTAMI_PASSWORD")
 HEADLESS = os.getenv("PRENOTAMI_HEADLESS", "true").lower() in ("1", "true", "yes")
+TIMEZONE_ID = os.getenv("PRENOTAMI_TIMEZONE", "Europe/Rome")
+LOCALE = os.getenv("PRENOTAMI_LOCALE", "it-IT")
+USER_AGENT = os.getenv(
+    "PRENOTAMI_USER_AGENT",
+    (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+)
 UNAVAILABLE_TEXT = (
     "Stante l'elevata richiesta i posti disponibili "
     "per il servizio scelto sono esauriti."
@@ -84,13 +93,28 @@ def appointments_available() -> bool:
         raise RuntimeError("PRENOTAMI_EMAIL and PRENOTAMI_PASSWORD must be set")
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=HEADLESS)
-        page = browser.new_page()
+        browser = playwright.chromium.launch(
+            headless=HEADLESS,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--window-size=1920,1080",
+            ],
+        )
+        context = browser.new_context(
+            viewport={"width": 1365, "height": 768},
+            screen={"width": 1920, "height": 1080},
+            locale=LOCALE,
+            timezone_id=TIMEZONE_ID,
+            user_agent=USER_AGENT,
+        )
+        page = context.new_page()
 
         try:
             login(page)
             return any(service_available(page, service_id) for service_id in SERVICE_IDS)
         finally:
+            context.close()
             browser.close()
 
 

@@ -29,6 +29,15 @@ USE_XVFB = os.getenv("BOT_USE_XVFB", os.getenv("BOT_USE_XVBF", "true")).lower() 
     "true",
     "yes",
 )
+XVFB_FORCE_HEADED = os.getenv("BOT_XVFB_FORCE_HEADED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+XVFB_SERVER_ARGS = os.getenv(
+    "BOT_XVFB_SERVER_ARGS",
+    "-screen 0 1920x1080x24 -ac +extension RANDR",
+)
 
 if not TELEGRAM_BOT_TOKEN:
     raise SystemExit("Missing TELEGRAM_BOT_TOKEN environment variable")
@@ -143,9 +152,14 @@ def check_appointments_with_xvfb() -> bool:
         "from data import appointments_available; "
         "print(json.dumps({'available': appointments_available()}))"
     )
+    env = os.environ.copy()
+    if XVFB_FORCE_HEADED:
+        env["PRENOTAMI_HEADLESS"] = "false"
+
     result = subprocess.run(
-        [xvfb_run, "-a", sys.executable, "-c", script],
+        [xvfb_run, "-a", "-s", XVFB_SERVER_ARGS, sys.executable, "-c", script],
         capture_output=True,
+        env=env,
         text=True,
     )
     if result.returncode != 0:
