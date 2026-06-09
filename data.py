@@ -18,7 +18,7 @@ def check_appointments():
         return
 
     # Note: binary_path bypasses the ARM64/aarch64 error from your logs
-    with SB(headless=HEADLESS, locale_code=LOCALE) as sb:
+    with SB(headless=HEADLESS, locale_code=LOCALE, binary_location="/usr/bin/chromium-browser", driver_version="custom", executable_path="/usr/bin/chromedriver") as sb:
         
         # 1. Open home page & login
         sb.open("https://prenotami.esteri.it/")
