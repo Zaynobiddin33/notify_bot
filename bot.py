@@ -172,7 +172,6 @@ async def cmd_start(message: Message):
     if not is_allowed:
         await message.reply(
             "Siz hali bazaga qo'shilmagansiz. "
-            "Admin sizni /adduser bilan qo'shishi kerak."
         )
         return
 
