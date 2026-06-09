@@ -15,7 +15,8 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from dotenv import load_dotenv
 
-from data import AccessTemporarilyLimited, appointments_available
+# Updated import to match your simplified data.py
+from data import check_appointments
 
 load_dotenv()
 
@@ -145,16 +146,17 @@ def check_appointments_with_xvfb() -> bool:
     if not USE_XVFB or xvfb_run is None:
         if USE_XVFB:
             logger.warning("xvfb-run was not found; running appointment check directly.")
-        return appointments_available()
+        return check_appointments()
 
+    # Updated script to use the simplified check_appointments function
     script = """
 import json
-from data import AccessTemporarilyLimited, appointments_available
+from data import check_appointments
 
 try:
-    print(json.dumps({"available": appointments_available()}))
-except AccessTemporarilyLimited as exc:
-    print(json.dumps({"available": False, "limited": True, "error": str(exc)}))
+    print(json.dumps({"available": check_appointments()}))
+except Exception as exc:
+    print(json.dumps({"available": False, "error": str(exc)}))
 """
     env = os.environ.copy()
     if XVFB_FORCE_HEADED:
@@ -176,12 +178,12 @@ except AccessTemporarilyLimited as exc:
     if not output_lines:
         raise RuntimeError("xvfb-run finished successfully but produced no output")
 
-    result = json.loads(output_lines[-1])
-    if result.get("limited"):
-        logger.warning("Prenotami limited access: %s", result.get("error"))
+    result_data = json.loads(output_lines[-1])
+    if result_data.get("error"):
+        logger.warning("Prenotami check encountered an error: %s", result_data.get("error"))
         return False
 
-    available = result["available"]
+    available = result_data["available"]
     if isinstance(available, list):
         return any(available)
     return bool(available)
@@ -196,14 +198,11 @@ def run_appointment_check() -> bool:
         logger.warning("xvfb-run was not found; running appointment check directly.")
 
     try:
-        return appointments_available()
-    except AccessTemporarilyLimited as exc:
-        logger.warning("Prenotami limited access: %s", exc)
-        return False
+        return check_appointments()
     except Exception as exc:
         if "headed browser without having a XServer" in str(exc):
             raise RuntimeError(
-                "Playwright needs an X server. Install xvfb/xauth on the server "
+                "Browser needs an X server. Install xvfb/xauth on the server "
                 "or set PRENOTAMI_HEADLESS=true."
             ) from exc
         raise
@@ -330,17 +329,16 @@ async def monitor_appointments() -> None:
         try:
             available = await asyncio.to_thread(run_appointment_check)
             is_available = is_available_result(available)
-            logger.info("appointments_available returned: %s", available)
+            logger.info("check_appointments returned: %s", available)
 
             if is_available and not last_available:
                 await notify_all_users(NOTIFICATION_TEXT)
 
             last_available = is_available
-        except AccessTemporarilyLimited as exc:
-            last_available = False
-            logger.warning("Prenotami limited access: %s", exc)
-        except Exception:
-            logger.exception("Appointment availability check failed.")
+            
+        except Exception as exc:
+            # Replaces the AccessTemporarilyLimited catch with a general exception log
+            logger.exception("Appointment availability check failed: %s", exc)
 
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
