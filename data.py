@@ -11,6 +11,7 @@ PASSWORD = os.getenv("PRENOTAMI_PASSWORD")
 HEADLESS = os.getenv("PRENOTAMI_HEADLESS", "true").lower() in ("1", "true", "yes")
 TIMEZONE_ID = os.getenv("PRENOTAMI_TIMEZONE", "Europe/Rome")
 LOCALE = os.getenv("PRENOTAMI_LOCALE", "it-IT")
+SCREENSHOT_PATH = os.getenv("PRENOTAMI_SCREENSHOT_PATH", "prenotami-entry.png")
 USER_AGENT = os.getenv(
     "PRENOTAMI_USER_AGENT",
     (
@@ -38,6 +39,17 @@ def goto_page(page, url: str) -> None:
         pass
 
 
+def save_screenshot(page, path: str) -> None:
+    if not path:
+        return
+
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+
+    page.screenshot(path=path, full_page=True)
+
+
 def page_text_sample(page) -> str:
     try:
         return page.locator("body").inner_text(timeout=5000)[:700]
@@ -47,6 +59,7 @@ def page_text_sample(page) -> str:
 
 def open_login_page(page) -> None:
     goto_page(page, "https://prenotami.esteri.it/")
+    save_screenshot(page, SCREENSHOT_PATH)
 
     login_link = page.get_by_text("Effettuare il Login per accedere al portale")
     try:
