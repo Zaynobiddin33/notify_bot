@@ -15,7 +15,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from dotenv import load_dotenv
 
-from data import appointments_available
+from data import AccessTemporarilyLimited, appointments_available
 
 load_dotenv()
 
@@ -147,11 +147,15 @@ def check_appointments_with_xvfb() -> bool:
             logger.warning("xvfb-run was not found; running appointment check directly.")
         return appointments_available()
 
-    script = (
-        "import json; "
-        "from data import appointments_available; "
-        "print(json.dumps({'available': appointments_available()}))"
-    )
+    script = """
+import json
+from data import AccessTemporarilyLimited, appointments_available
+
+try:
+    print(json.dumps({"available": appointments_available()}))
+except AccessTemporarilyLimited as exc:
+    print(json.dumps({"available": False, "limited": True, "error": str(exc)}))
+"""
     env = os.environ.copy()
     if XVFB_FORCE_HEADED:
         env["PRENOTAMI_HEADLESS"] = "false"
@@ -172,7 +176,12 @@ def check_appointments_with_xvfb() -> bool:
     if not output_lines:
         raise RuntimeError("xvfb-run finished successfully but produced no output")
 
-    available = json.loads(output_lines[-1])["available"]
+    result = json.loads(output_lines[-1])
+    if result.get("limited"):
+        logger.warning("Prenotami limited access: %s", result.get("error"))
+        return False
+
+    available = result["available"]
     if isinstance(available, list):
         return any(available)
     return bool(available)
@@ -188,6 +197,9 @@ def run_appointment_check() -> bool:
 
     try:
         return appointments_available()
+    except AccessTemporarilyLimited as exc:
+        logger.warning("Prenotami limited access: %s", exc)
+        return False
     except Exception as exc:
         if "headed browser without having a XServer" in str(exc):
             raise RuntimeError(
@@ -324,6 +336,9 @@ async def monitor_appointments() -> None:
                 await notify_all_users(NOTIFICATION_TEXT)
 
             last_available = is_available
+        except AccessTemporarilyLimited as exc:
+            last_available = False
+            logger.warning("Prenotami limited access: %s", exc)
         except Exception:
             logger.exception("Appointment availability check failed.")
 

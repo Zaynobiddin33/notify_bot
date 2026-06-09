@@ -1,7 +1,5 @@
-from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
+from seleniumbase import SB
 import os
 
 load_dotenv()
@@ -9,37 +7,26 @@ load_dotenv()
 EMAIL = os.getenv("PRENOTAMI_EMAIL")
 PASSWORD = os.getenv("PRENOTAMI_PASSWORD")
 HEADLESS = os.getenv("PRENOTAMI_HEADLESS", "true").lower() in ("1", "true", "yes")
-TIMEZONE_ID = os.getenv("PRENOTAMI_TIMEZONE", "Europe/Rome")
 LOCALE = os.getenv("PRENOTAMI_LOCALE", "it-IT")
 SCREENSHOT_PATH = os.getenv("PRENOTAMI_SCREENSHOT_PATH", "prenotami-entry.png")
-USER_AGENT = os.getenv(
-    "PRENOTAMI_USER_AGENT",
-    (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-)
 UNAVAILABLE_TEXT = (
     "Stante l'elevata richiesta i posti disponibili "
     "per il servizio scelto sono esauriti."
 )
 SERVICE_IDS = ("6000", "6005")
+LIMITED_ACCESS_TEXTS = (
+    "Accesso temporaneamente limitato",
+    "Verifica CAPTCHA",
+    "Sono un essere umano",
+    "potenzialmente automatizzato",
+)
 
 
-def goto_page(page, url: str) -> None:
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    except PlaywrightError as exc:
-        if "net::ERR_ABORTED" not in str(exc):
-            raise
-
-    try:
-        page.wait_for_load_state("domcontentloaded", timeout=30000)
-    except (PlaywrightError, PlaywrightTimeoutError):
-        pass
+class AccessTemporarilyLimited(RuntimeError):
+    pass
 
 
-def save_screenshot(page, path: str) -> None:
+def save_screenshot(sb, path: str) -> None:
     if not path:
         return
 
@@ -47,88 +34,88 @@ def save_screenshot(page, path: str) -> None:
     if directory:
         os.makedirs(directory, exist_ok=True)
 
-    page.screenshot(path=path, full_page=True)
+    sb.save_screenshot(path)
 
 
-def page_text_sample(page) -> str:
+def page_text_sample(sb) -> str:
     try:
-        return page.locator("body").inner_text(timeout=5000)[:700]
-    except PlaywrightError:
-        return page.content()[:700]
+        return sb.get_text("body")[:700]
+    except Exception:
+        return sb.get_page_source()[:700]
 
 
-def open_login_page(page) -> None:
-    goto_page(page, "https://prenotami.esteri.it/")
-    save_screenshot(page, SCREENSHOT_PATH)
+def ensure_not_limited(sb) -> None:
+    body = page_text_sample(sb)
+    if any(text in body for text in LIMITED_ACCESS_TEXTS):
+        raise AccessTemporarilyLimited(
+            "Prenotami temporarily limited access and requested CAPTCHA. "
+            f"url={sb.get_current_url()!r} body={body!r}"
+        )
 
-    login_link = page.get_by_text("Effettuare il Login per accedere al portale")
+
+def open_page(sb, url: str) -> None:
+    sb.open(url)
+    sb.wait_for_ready_state_complete(timeout=60)
+
+
+def open_login_page(sb) -> None:
+    open_page(sb, "https://prenotami.esteri.it/")
+    save_screenshot(sb, SCREENSHOT_PATH)
+    ensure_not_limited(sb)
+
+    login_url = None
     try:
-        if login_link.is_visible(timeout=15000):
-            login_link.click(timeout=15000)
-            page.wait_for_load_state("domcontentloaded", timeout=30000)
+        sb.wait_for_element_visible("#pingid-button", timeout=15)
+        login_url = sb.get_attribute("#pingid-button", "href")
+        sb.click("#pingid-button")
+        sb.wait_for_ready_state_complete(timeout=30)
+        return
+    except Exception:
+        if login_url:
+            open_page(sb, login_url)
             return
-    except (PlaywrightError, PlaywrightTimeoutError):
-        pass
 
-    goto_page(page, "https://prenotami.esteri.it/Account/Login")
+    open_page(sb, "https://prenotami.esteri.it/Account/Login")
 
 
-def login(page) -> None:
-    open_login_page(page)
+def login(sb) -> None:
+    open_login_page(sb)
+    ensure_not_limited(sb)
 
-    username_input = page.locator('input[type="email"], input[type="text"]').first
-    password_input = page.locator('input[type="password"]').first
+    username_selector = 'input[type="email"], input[type="text"]'
+    password_selector = 'input[type="password"]'
 
     try:
-        username_input.wait_for(state="visible", timeout=30000)
-        password_input.wait_for(state="visible", timeout=30000)
-    except PlaywrightTimeoutError as exc:
+        sb.wait_for_element_visible(username_selector, timeout=30)
+        sb.wait_for_element_visible(password_selector, timeout=30)
+    except Exception as exc:
         raise RuntimeError(
             "Prenotami login form was not found. "
-            f"url={page.url!r} title={page.title()!r} body={page_text_sample(page)!r}"
+            f"url={sb.get_current_url()!r} body={page_text_sample(sb)!r}"
         ) from exc
 
-    username_input.fill(EMAIL)
-    password_input.fill(PASSWORD)
-    page.locator('button[type="submit"], input[type="submit"]').first.click()
-    page.wait_for_load_state("load", timeout=60000)
-    page.wait_for_timeout(5000)
+    sb.type(username_selector, EMAIL)
+    sb.type(password_selector, PASSWORD)
+    sb.click('button[type="submit"], input[type="submit"]')
+    sb.wait_for_ready_state_complete(timeout=60)
+    sb.sleep(5)
+    ensure_not_limited(sb)
 
 
-def service_available(page, service_id: str) -> bool:
-    goto_page(page, f"https://prenotami.esteri.it/Services/Booking/{service_id}")
-    page.wait_for_timeout(3000)
-    return UNAVAILABLE_TEXT not in page.content()
+def service_available(sb, service_id: str) -> bool:
+    open_page(sb, f"https://prenotami.esteri.it/Services/Booking/{service_id}")
+    sb.sleep(3)
+    ensure_not_limited(sb)
+    return UNAVAILABLE_TEXT not in sb.get_page_source()
 
 
 def appointments_available() -> bool:
     if not EMAIL or not PASSWORD:
         raise RuntimeError("PRENOTAMI_EMAIL and PRENOTAMI_PASSWORD must be set")
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            headless=HEADLESS,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--window-size=1920,1080",
-            ],
-        )
-        context = browser.new_context(
-            viewport={"width": 1365, "height": 768},
-            screen={"width": 1920, "height": 1080},
-            locale=LOCALE,
-            timezone_id=TIMEZONE_ID,
-            user_agent=USER_AGENT,
-        )
-        page = context.new_page()
-
-        try:
-            login(page)
-            return any(service_available(page, service_id) for service_id in SERVICE_IDS)
-        finally:
-            context.close()
-            browser.close()
+    with SB(headless=HEADLESS, locale_code=LOCALE) as sb:
+        login(sb)
+        return any(service_available(sb, service_id) for service_id in SERVICE_IDS)
 
 
 if __name__ == "__main__":
