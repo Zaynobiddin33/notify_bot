@@ -44,21 +44,25 @@ def load_cookies(sb) -> None:
 def check_appointments():
     email, password = require_credentials()
 
-    with SB(headless=True, locale_code=LOCALE, uc=True) as sb:
+    with SB(headless=True, locale_code=LOCALE) as sb:
         # sb.activate_cdp_mode('https://prenotami.esteri.it/')
         sb.open("https://prenotami.esteri.it/")
         load_cookies(sb)
 
         sb.click_captcha()
 
+        sb.save_screenshot('1.png')
+
         sb.click("#pingid-button", timeout=5)
     
         sb.wait_for_element('#floatingLabelInput33')
+        sb.save_screenshot('2.png')
 
         sb.type('input[type="text"]', email)
         sb.type('input[type="password"]', password)
         sb.click('button[type="submit"]')
         sb.wait_for_element("#advanced")
+        sb.save_screenshot('3.png')
 
         any_available = False
         sb.open(f"https://prenotami.esteri.it/Services/Booking/6000")
@@ -67,7 +71,7 @@ def check_appointments():
             any_available = True
         else:
             print(f"No slots for service VISA.")
-        
+        sb.save_screenshot('4.png')
         sb.sleep(3)
 
         sb.open(f"https://prenotami.esteri.it/Services/Booking/6005")
@@ -76,6 +80,7 @@ def check_appointments():
             any_available = True
         else:
             print(f"No slots for service DOI.")
+        sb.save_screenshot('5.png')
 
         return any_available
 
