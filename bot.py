@@ -1,12 +1,8 @@
 import asyncio
-import json
 import logging
 import os
 import re
-import shutil
 import sqlite3
-import subprocess
-import sys
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
@@ -15,9 +11,6 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from dotenv import load_dotenv
 
-# Updated import to match your simplified data.py
-from data import check_appointments
-
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -25,20 +18,6 @@ ADMIN_ID = os.getenv("BOT_ADMIN_ID")
 DB_PATH = os.getenv("BOT_DB_PATH", "users.db")
 NOTIFICATION_TEXT = os.getenv("BOT_NOTIFICATION_TEXT", "Qabul Ochildi")
 CHECK_INTERVAL_SECONDS = int(os.getenv("BOT_CHECK_INTERVAL_SECONDS", "300"))
-USE_XVFB = os.getenv("BOT_USE_XVFB", os.getenv("BOT_USE_XVBF", "true")).lower() in (
-    "1",
-    "true",
-    "yes",
-)
-XVFB_FORCE_HEADED = os.getenv("BOT_XVFB_FORCE_HEADED", "true").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-XVFB_SERVER_ARGS = os.getenv(
-    "BOT_XVFB_SERVER_ARGS",
-    "-screen 0 1920x1080x24 -ac +extension RANDR",
-)
 
 if not TELEGRAM_BOT_TOKEN:
     raise SystemExit("Missing TELEGRAM_BOT_TOKEN environment variable")
@@ -141,71 +120,10 @@ def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
 
-def check_appointments_with_xvfb() -> bool:
-    xvfb_run = shutil.which("xvfb-run")
-    if not USE_XVFB or xvfb_run is None:
-        if USE_XVFB:
-            logger.warning("xvfb-run was not found; running appointment check directly.")
-        return check_appointments()
-
-    # Updated script to use the simplified check_appointments function
-    script = """
-import json
-from data import check_appointments
-
-try:
-    print(json.dumps({"available": check_appointments()}))
-except Exception as exc:
-    print(json.dumps({"available": False, "error": str(exc)}))
-"""
-    env = os.environ.copy()
-    if XVFB_FORCE_HEADED:
-        env["PRENOTAMI_HEADLESS"] = "false"
-
-    result = subprocess.run(
-        [xvfb_run, "-a", "-s", XVFB_SERVER_ARGS, sys.executable, "-c", script],
-        capture_output=True,
-        env=env,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            "xvfb-run appointment check failed with code "
-            f"{result.returncode}. stdout={result.stdout!r} stderr={result.stderr!r}"
-        )
-
-    output_lines = result.stdout.strip().splitlines()
-    if not output_lines:
-        raise RuntimeError("xvfb-run finished successfully but produced no output")
-
-    result_data = json.loads(output_lines[-1])
-    if result_data.get("error"):
-        logger.warning("Prenotami check encountered an error: %s", result_data.get("error"))
-        return False
-
-    available = result_data["available"]
-    if isinstance(available, list):
-        return any(available)
-    return bool(available)
-
-
 def run_appointment_check() -> bool:
-    xvfb_run = shutil.which("xvfb-run")
-    if USE_XVFB and xvfb_run is not None:
-        return check_appointments_with_xvfb()
+    from data import check_appointments
 
-    if USE_XVFB:
-        logger.warning("xvfb-run was not found; running appointment check directly.")
-
-    try:
-        return check_appointments()
-    except Exception as exc:
-        if "headed browser without having a XServer" in str(exc):
-            raise RuntimeError(
-                "Browser needs an X server. Install xvfb/xauth on the server "
-                "or set PRENOTAMI_HEADLESS=true."
-            ) from exc
-        raise
+    return check_appointments()
 
 
 def is_available_result(result) -> bool:
@@ -333,11 +251,9 @@ async def monitor_appointments() -> None:
 
             if is_available and not last_available:
                 await notify_all_users(NOTIFICATION_TEXT)
-
             last_available = is_available
-            
+
         except Exception as exc:
-            # Replaces the AccessTemporarilyLimited catch with a general exception log
             logger.exception("Appointment availability check failed: %s", exc)
 
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
@@ -348,10 +264,11 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
 
+    await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(monitor_appointments())
 
     logger.info("Bot startup complete.")
-    await dp.start_polling(bot, skip_updates=True)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":

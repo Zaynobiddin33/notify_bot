@@ -1,5 +1,5 @@
 .venv
 env
 .env
-user.db
+users.db
 __pycache__
